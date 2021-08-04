@@ -10,6 +10,14 @@ class Playlist {
   final String name;
   final int followers;
   final String id;
+  final String image;
 
-  Playlist({required this.name, required this.followers, required this.id});
+  Playlist({required this.name, required this.followers, required this.id, required this.image});
+}
+
+class Track {
+  final String name, image;
+  List<String> artists;
+
+  Track({required this.name, required this.image, required this.artists});
 }

@@ -5,7 +5,6 @@ import 'package:flutter_spotify_africa_assessment/colors.dart';
 import 'package:flutter_spotify_africa_assessment/routes.dart';
 import 'package:flutter_spotify_africa_assessment/utilities/data.dart';
 import 'package:http/http.dart' as http;
-
 import '../../../../colors.dart';
 
 // TODO: fetch and populate playlist info and allow for click-through to detail
@@ -27,8 +26,14 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
   late String afroCategoryName, afroCategoryImage;
   bool hasData = false;
   bool isLoading = false;
+  int limit = 20;
+  int offset = 0;
   var playlists;
   List<int> followers = [];
+  List<Playlist> myPlaylists = [];
+
+  //Scroll Controller for Pagination
+  ScrollController _scrollController = ScrollController();
 
   //Future function for fetching category details from Spotify API
   Future<void> getData() async {
@@ -36,19 +41,38 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
       followers.clear();
       isLoading = true;
     });
-    //Perform GET request for Afro category data
+    //Perform GET requestS
     var response = await http.get(Uri.parse(baseUrl + 'browse/categories/afro'), headers: headers);
     var playlistsResponse = await http.get(Uri.parse(baseUrl + 'browse/categories/afro/playlists'), headers: headers);
     if(response.statusCode == 200 || playlistsResponse.statusCode == 200){
+
       //If request is successful, load category data
+      var decodeHttp = json.decode(response.body);
+      var decodePlaylistsHttp = json.decode(playlistsResponse.body);
       setState(() {
         isLoading = false;
         hasData = true;
-        var decodeHttp = json.decode(response.body);
-        var decodePlaylistsHttp = json.decode(playlistsResponse.body);
         playlists = decodePlaylistsHttp['playlists']['items'];
         afroCategoryName = decodeHttp['name'] ;
         afroCategoryImage = decodeHttp['icons'][0]['url'] ;
+      });
+
+      //Populate list of playlists
+      playlists.forEach((item) async{
+        String id = item['id'];
+        String name = item['name'];
+        String image = item['images'][0]['url'];
+        int followers = 0;
+        //Perform GET request for followers data
+        var response = await http.get(Uri.parse(baseUrl + 'playlists/$id'), headers: headers);
+        if(response.statusCode == 200){
+          this.setState(() {
+            var decodeHttp = json.decode(response.body);
+            int temp = decodeHttp['followers']['total'];
+            followers = temp;
+          });
+        }
+        myPlaylists.add(Playlist(name: name, id: id, followers: followers, image: image));
       });
     }
     else {
@@ -57,22 +81,39 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
         hasData = false;
       });
     }
-    playlists.forEach((item){
-      getFollowers(item['id']);
-    });
-    print(playlists.length);
-    print(followers.length);
   }
 
-  //Get Number of followers
-  Future<void> getFollowers(String id) async {
-    //Perform GET request for followers data
-    var response = await http.get(Uri.parse(baseUrl + 'playlists/$id'), headers: headers);
+  //Get next page
+  Future<void> getDataPerPage(int limit, int offset) async {
+    var response = await http.get(Uri.parse(baseUrl + 'browse/categories/afro/playlists?limit=$limit&offset=$offset'), headers: headers,);
     if(response.statusCode == 200){
-      this.setState(() {
-        var decodeHttp = json.decode(response.body);
-       int temp = decodeHttp['followers']['total'];
-        followers.add(temp);
+      var decodeHttp = json.decode(response.body);
+      playlists = decodeHttp['playlists']['items'];
+
+      //Populate list of playlists
+      playlists.forEach((item) async{
+        String id = item['id'];
+        String name = item['name'];
+        String image = item['images'][0]['url'];
+        int followers = 0;
+        //Perform GET request for followers data
+        var response = await http.get(Uri.parse(baseUrl + 'playlists/$id'), headers: headers);
+        if(response.statusCode == 200){
+          this.setState(() {
+            var decodeHttp = json.decode(response.body);
+            int temp = decodeHttp['followers']['total'];
+            followers = temp;
+          });
+        }
+        if(myPlaylists.contains(Playlist(name: name, id: id, followers: followers, image: image))){
+
+        }
+        else {
+          myPlaylists.add(
+              Playlist(name: name, id: id, followers: followers, image: image));
+        }
+      });
+      setState(() {
       });
     }
   }
@@ -83,9 +124,40 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
     // TODO: implement initState
     super.initState();
     this.getData();
+    _scrollController.addListener(() {
+      if(_scrollController.position.pixels == _scrollController.position.maxScrollExtent){
+        //Load next page
+        setState(() {
+          offset+= 20;
+        });
+        getDataPerPage(limit, offset);
+      }
+      else if(_scrollController.position.pixels == _scrollController.position.minScrollExtent){
+        //Load previous page
+        if(offset != 0) {
+          setState(() {
+            offset -= 20;
+          });
+        }
+        else {
+          setState(() {
+            offset = 0;
+          });
+        }
+        getDataPerPage(limit, offset);
+      }
+    });
     setState(() {
 
     });
+  }
+
+  //Dispose controller on exit page
+  @override
+  void dispose() {
+    // TODO: implement dispose
+    super.dispose();
+    _scrollController.dispose();
   }
   @override
   Widget build(BuildContext context) {
@@ -130,9 +202,7 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
                           child: CircularProgressIndicator(
                             strokeWidth: 2.0,
                           ),
-                          //width: MediaQuery.of(context).size.width,
-                          height: MediaQuery.of(context).size.height,
-                          padding: EdgeInsets.all(20.0),
+                          padding: EdgeInsets.all(4.0),
                         ),
                         imageUrl: afroCategoryImage,
                         width: MediaQuery.of(context).size.width * 0.57,
@@ -152,16 +222,20 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
                   Expanded(
                       child: Container(
                         child: GridView.builder(
+                          controller: _scrollController,
                             gridDelegate:
                             SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2),
-                            itemCount: playlists == null
-                                ? 0 : playlists.length,
+                            itemCount: myPlaylists == null
+                                ? 0 : myPlaylists.length,
                             itemBuilder: (BuildContext context, int index) {
-                              var item = playlists[index];
-                              String name = item['name'];
-                              String id =  item['id'];
-                              String image = item['images'][0]['url'];
+                              var item = myPlaylists[index];
+                              String name = item.name;
+                              String id =  item.id;
+                              String image = item.image;
+                              int myfollowers = item.followers;
                               return GestureDetector(
+                                onTap: ()=> Navigator.of(context).pushReplacementNamed(AppRoutes.spotifyPlaylist,
+                                    arguments: item),
                                 child: Padding(
                                   padding: const EdgeInsets.all(4.0),
                                   child: Container(
@@ -201,10 +275,7 @@ class _SpotifyCategoryState extends State<SpotifyCategory> {
                                             fontSize: 18,
                                           ),
                                           ),
-                                        ),
-                                        followers.length == 0 || followers.length < index + 1
-                                        ? Text('loading...')
-                                        : Text('${followers[index]} followers')
+                                        ),Text('$myfollowers followers')
                                       ],
                                     ),
                                   ),
